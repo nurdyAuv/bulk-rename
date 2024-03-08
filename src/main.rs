@@ -1,10 +1,9 @@
-#![windows_subsystem = "windows"]
-
 use eframe::egui;
 use egui_extras;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::usize;
 use faccess;
 use faccess::AccessMode;
 use faccess::PathExt;
@@ -178,8 +177,9 @@ struct BulkGui {
     update_all: bool,
     show_all_items: bool,
 
-    edits: Vec<Edit>,
     errors: Vec<String>,
+    edits_redo: Vec<Edit>,
+    edits_undo: Vec<Edit>,
 
     dialog_open_save: bool,
     dialog_save_enabled: bool,
@@ -189,6 +189,10 @@ struct BulkGui {
     dialog_preview_enabled: bool,
     dialog_open_error: bool,
     dialog_error_enabled: bool,
+    dialog_open_redo: bool,
+    dialog_redo_enabled: bool,
+    dialog_open_undo: bool,
+    dialog_undo_enabled: bool,
 
     files_selected: Vec<String>,
     modifications_total: u16,
@@ -199,6 +203,7 @@ struct BulkGui {
     section_browser_enabled: bool,
     section_files_enabled: bool,
     section_options_enabled: bool,
+    section_options_save_enabled: bool,
 
     section_files_hovered: bool,
 
@@ -317,14 +322,15 @@ impl Default for BulkGui {
     fn default() -> Self {
         Self {
             os_string: "",
-            version: "0.9.9.8",
+            version: "0.9.10.2",
             program_name: "Bulk Rename",
             first_cycle: true,
             update_all: true,
             show_all_items: false,
 
             errors: vec![],
-            edits: vec![],
+            edits_redo: vec![],
+            edits_undo: vec![],
 
             dialog_open_save: false,
             dialog_save_enabled: true,
@@ -334,6 +340,10 @@ impl Default for BulkGui {
             dialog_preview_enabled: true,
             dialog_open_error: false,
             dialog_error_enabled: true,
+            dialog_open_redo: false,
+            dialog_redo_enabled: true,
+            dialog_open_undo: false,
+            dialog_undo_enabled: true,
 
             files_selected: vec![],
             modifications_total: 0,
@@ -344,7 +354,7 @@ impl Default for BulkGui {
             section_browser_enabled: true,
             section_files_enabled: true,
             section_options_enabled: true,
-
+            section_options_save_enabled: true,
             section_files_hovered: false,
 
             browser_folder: Folder::default(),
@@ -423,7 +433,7 @@ impl Default for BulkGui {
             section_options_numbering_pad: 0,
 
             button_defaults_enabled: false,
-            button_undo_enabled: false,
+            button_undo_enabled: true,
             button_redo_enabled: true,
             button_browser_up_enabled: false,
             button_browser_directory_enabled: true,
@@ -495,6 +505,34 @@ impl BulkGui {
         self.section_options_enabled = true;
     }
 
+    fn window_undo_open(&mut self) {
+        self.dialog_open_undo = true;
+        self.section_browser_enabled = false;
+        self.section_files_enabled = false;
+        self.section_options_enabled = false;
+    }
+
+    fn window_undo_close(&mut self) {
+        self.dialog_open_undo = false;
+        self.section_browser_enabled = true;
+        self.section_files_enabled = true;
+        self.section_options_enabled = true;
+    }
+
+    fn window_redo_open(&mut self) {
+        self.dialog_open_redo = true;
+        self.section_browser_enabled = false;
+        self.section_files_enabled = false;
+        self.section_options_enabled = false;
+    }
+    
+    fn window_redo_close(&mut self) {
+        self.dialog_open_redo = false;
+        self.section_browser_enabled = true;
+        self.section_files_enabled = true;
+        self.section_options_enabled = true;
+    }
+
     fn save(&mut self) {
         self.window_saving_open();
 
@@ -527,15 +565,94 @@ impl BulkGui {
                     self.saving_progress += progress_slice;
                 },
                 Err(error) => {
+                    self.errors.push(error);
+                    self.dialog_open_error = true;
                     println!("{}", error);
                 }
             }
         }
         self.window_saving_close();
         self.update_all = true;
-        self.edits.push(edits);
+        self.edits_undo.clear();
+        self.edits_redo.clear();
+        self.edits_undo.push(edits);
     }
 
+    fn undo(&mut self) {
+        self.window_saving_open();
+
+        // Make Edit Struct and fill it.
+        let mut edits = Edit {
+            tag: "".to_string(),
+            items: vec![],
+            edits: 0
+        };
+        for (index, edditeditem) in self.edits_undo.pop().unwrap().items.iter().enumerate() {
+            let item = EdittedItem {
+                name_original: edditeditem.name_edited.to_owned(),
+                name_edited: edditeditem.name_original.to_owned(),
+                path_original: edditeditem.path_edited.to_owned(),
+                path_edited: edditeditem.path_original.to_owned()
+            };
+            edits.items.push(item);
+            edits.edits += 1;
+        }
+        let progress_slice: f32 = (1.0 / edits.edits as f32) * 100.0;
+        // Commit Changes
+        for item in &edits.items {
+            match rename_file(item.path_original.to_owned(), item.path_edited.to_owned()) {
+                Ok(_) => {
+                    self.saving_progress += progress_slice;
+                },
+                Err(error) => {
+                    self.errors.push(error);
+                    self.dialog_open_error = true;
+                    println!("{}", error);
+                }
+            }
+        }
+        self.window_saving_close();
+        self.update_all = true;
+        self.edits_redo.push(edits);
+    }
+
+    fn redo(&mut self) {
+        self.window_saving_open();
+
+        // Make Edit Struct and fill it.
+        let mut edits = Edit {
+            tag: "".to_string(),
+            items: vec![],
+            edits: 0
+        };
+        for (index, edditeditem) in self.edits_redo.pop().unwrap().items.iter().enumerate() {
+            let item = EdittedItem {
+                name_original: edditeditem.name_edited.to_owned(),
+                name_edited: edditeditem.name_original.to_owned(),
+                path_original: edditeditem.path_edited.to_owned(),
+                path_edited: edditeditem.path_original.to_owned()
+            };
+            edits.items.push(item);
+            edits.edits += 1;
+        }
+        let progress_slice: f32 = (1.0 / edits.edits as f32) * 100.0;
+        // Commit Changes
+        for item in &edits.items {
+            match rename_file(item.path_original.to_owned(), item.path_edited.to_owned()) {
+                Ok(_) => {
+                    self.saving_progress += progress_slice;
+                },
+                Err(error) => {
+                    self.errors.push(error);
+                    self.dialog_open_error = true;
+                    println!("{}", error);
+                }
+            }
+        }
+        self.window_saving_close();
+        self.update_all = true;
+        self.edits_undo.push(edits);
+    }
 }
 
 #[allow(dead_code)]
@@ -552,31 +669,29 @@ impl eframe::App for BulkGui {
             .show(ctx, |ui| {
                 ui.set_min_size(egui::Vec2::new(300.0, 105.0));
                 ui.set_max_size(egui::Vec2::new(300.0, 105.0));
-                ui.add_enabled_ui(self.dialog_save_enabled, |ui| {
-                    ui.vertical( |ui| {
-                        ui.add_space(7.0);
-                        ui.group(|ui| {
-                            ui.set_min_size(egui::Vec2::new(290.0, 90.0));
-                            ui.set_max_size(egui::Vec2::new(290.0, 90.0));
-                            ui.label(format!("You are about to write these changes to disk. \n\nYou have made {} changes to {} files \n\n\n Are you sure you want to save the changes?", self.modifications_total, self.table_files_selected_total));
+                ui.vertical( |ui| {
+                    ui.add_space(7.0);
+                    ui.group(|ui| {
+                        ui.set_min_size(egui::Vec2::new(290.0, 90.0));
+                        ui.set_max_size(egui::Vec2::new(290.0, 90.0));
+                        ui.label(format!("You are about to write these changes to disk. \n\nYou have made {} changes to {} files \n\n\n Are you sure you want to save the changes?", self.modifications_total, self.table_files_selected_total));
+                        ui.separator();
+                        ui.horizontal( |ui| {
+                            if ui.button("Cancel").clicked() {
+                                // Cancel
+                                self.window_save_close();
+                            };
                             ui.separator();
-                            ui.horizontal( |ui| {
-                                if ui.button("Cancel").clicked() {
-                                    // Cancel
-                                    self.window_save_close();
-                                };
-                                ui.separator();
-                                ui.add_space(180.0);
-                                ui.separator();
-                                if ui.button("Save").clicked() {
-                                    // Do some saving
-                                    self.window_save_close();
-                                    self.save();
-                                };
-                            })
-                        });
+                            ui.add_space(180.0);
+                            ui.separator();
+                            if ui.button("Save").clicked() {
+                                // Do some saving
+                                self.window_save_close();
+                                self.save();
+                            };
+                        })
                     });
-                })
+                });
             });
         }
         
@@ -660,6 +775,74 @@ impl eframe::App for BulkGui {
             });
         }
 
+        // Undo Window
+        if self.dialog_open_undo {
+            egui::Window::new("Confirm Undo")
+            .resizable(false)
+            .collapsible(false)
+            .title_bar(true)
+            .default_pos(egui::Pos2::new(frame.info().window_info.size.x * 0.4, frame.info().window_info.size.y * 0.4))
+            .show(ctx, |ui| {
+                ui.vertical( |ui| {
+                ui.add_space(7.0);
+                ui.group(|ui| {
+                    ui.set_min_size(egui::Vec2::new(260.0, 45.0));
+                    ui.set_max_size(egui::Vec2::new(260.0, 45.0));
+                    ui.label(format!("Are you sure you'd like to undo the last action?"));
+                    ui.separator();
+                    ui.horizontal( |ui| {
+                        if ui.button("Cancel").clicked() {
+                            // Cancel
+                            self.window_undo_close();
+                        };
+                        ui.separator();
+                        ui.add_space(180.0);
+                        ui.separator();
+                        if ui.button("Confirm").clicked() {
+                            // Do some undoing
+                            self.window_undo_close();
+                            self.undo();
+                        };
+                    })
+                });
+            });
+            });
+        }
+
+        // Redo Window
+        if self.dialog_open_redo {
+            egui::Window::new("Confirm Redo")
+            .resizable(false)
+            .collapsible(false)
+            .title_bar(true)
+            .default_pos(egui::Pos2::new(frame.info().window_info.size.x * 0.4, frame.info().window_info.size.y * 0.4))
+            .show(ctx, |ui| {
+                ui.vertical( |ui| {
+                ui.add_space(7.0);
+                ui.group(|ui| {
+                    ui.set_min_size(egui::Vec2::new(260.0, 45.0));
+                    ui.set_max_size(egui::Vec2::new(260.0, 45.0));
+                    ui.label(format!("Are you sure you'd like to redo the last undo?"));
+                    ui.separator();
+                    ui.horizontal( |ui| {
+                        if ui.button("Cancel").clicked() {
+                            // Cancel
+                            self.window_redo_close();
+                        };
+                        ui.separator();
+                        ui.add_space(180.0);
+                        ui.separator();
+                        if ui.button("Confirm").clicked() {
+                            // Do some redoing
+                            self.window_redo_close();
+                            self.redo();
+                        };
+                    })
+                });
+            });
+            });
+        }
+
         if self.first_cycle {
             if cfg!(windows) {
                 self.os_string = "Windows";
@@ -738,27 +921,24 @@ impl eframe::App for BulkGui {
                     };
                 });
                 ui.menu_button("Edit", |ui| {
-                    /*
-                        ///////////////////////////////////////////////////////
-                        MAKE ENABLABLE
-                        ///////////////////////////////////////////////////////
-                     */
-                    if ui.button("↪ Undo Last Action").clicked(){
-                        
+                    let undo_button = ui.add_enabled(self.button_undo_enabled, egui::Button::new("↩ Undo Last Action"));
+                    if undo_button.clicked(){
+                        self.window_undo_open();
                     };
-                    if ui.button("↩ Redo Last Action").clicked(){
-                        
+                    let redo_button = ui.add_enabled(self.button_redo_enabled, egui::Button::new("↪ Redo Last Action"));
+                    if redo_button.clicked(){
+                        self.window_redo_open();
                     };
                 });
+                
                 ui.menu_button("Options", |ui| {
                     if ui.checkbox(&mut self.checkbox_lock_section_resizing, "Lock Section Resizing").clicked() {
-                        // Do something? 
+
                     }
                     if ui.checkbox(&mut self.double_click_deselect_enabled, "Double-Click Deselect").clicked() {
-                        // Do something? 
+
                     }
                     if ui.checkbox(&mut self.show_all_items, "Show All Items").clicked() {
-                        // Do something?
                         self.update_all = true;
                     }
                 });
@@ -777,10 +957,10 @@ impl eframe::App for BulkGui {
                         };
                     });
                     ui.menu_button("Theme", |ui| {
-                        if ui.button("Dark").clicked() {
+                        if ui.button("🌙 Dark").clicked() {
                             ctx.set_visuals(egui::style::Visuals::dark());
                         };
-                        if ui.button("Light").clicked() {
+                        if ui.button("☀ Light").clicked() {
                             ctx.set_visuals(egui::style::Visuals::light());
                         };
                     });
@@ -793,6 +973,7 @@ impl eframe::App for BulkGui {
 
                     }
                 });
+                /*
                 ui.label(format!("\t\tWidth: {}", frame.info().window_info.size.x.to_string()));
                 ui.label(format!("Height: {}", frame.info().window_info.size.y.to_string()));
                 let pointer = ctx.pointer_latest_pos();
@@ -804,6 +985,7 @@ impl eframe::App for BulkGui {
                         ui.label(format!("\t\tPointer X: {:?}, Pointer Y: {:?}", pointer.x.floor(), pointer.y.floor()));
                     }
                 };
+                */
                 //ui.label(format!("{}", self.section_files_hovered.to_string()));
             });
             
@@ -1596,18 +1778,20 @@ impl eframe::App for BulkGui {
                                                     ui.set_min_size(egui::vec2(self.section_options_size_x * 0.98, 70.0));
                                                     ui.set_max_size(egui::vec2(self.section_options_size_x * 0.98, 70.0));
                                                     ui.vertical(|ui| {
-                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                                            let button_save = ui.add_sized(egui::vec2(64.0, 70.0), egui::Button::new("Save"));
-                                                            if button_save.clicked() && self.dialog_save_enabled {
-                                                                //Summon Dialog to confirm save
-                                                                self.window_save_open();
-                                                            };
-                                                            ui.vertical(|ui| {
-                                                                let button_preview = ui.button("Preview");
-                                                                if button_preview.clicked() && self.dialog_preview_enabled {
-                                                                    //Summon Dialog to preview changes
-                                                                    self.window_preview_open();
-                                                                }
+                                                        ui.add_enabled_ui(self.section_options_save_enabled, |ui| {
+                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                                                let button_save = ui.add_sized(egui::vec2(64.0, 70.0), egui::Button::new("Save"));
+                                                                if button_save.clicked() && self.dialog_save_enabled {
+                                                                    //Summon Dialog to confirm save
+                                                                    self.window_save_open();
+                                                                };
+                                                                ui.vertical(|ui| {
+                                                                    let button_preview = ui.button("Preview");
+                                                                    if button_preview.clicked() && self.dialog_preview_enabled {
+                                                                        //Summon Dialog to preview changes
+                                                                        self.window_preview_open();
+                                                                    }
+                                                                });
                                                             });
                                                         });
                                                     });
@@ -1706,7 +1890,7 @@ impl eframe::App for BulkGui {
                                 reversed = reversed + &char;
                             };
                             file = reversed;
-                        }
+                        },
                         NamingMode::Keep => {
                             // Don't do anything
                         }
@@ -1917,5 +2101,19 @@ impl eframe::App for BulkGui {
             };
         };
         
+        //Enable / Disable; Undo button
+        if self.edits_undo.len() >= 1 {
+            self.button_undo_enabled = true;
+        } else { self.button_undo_enabled = false };
+
+        //Enable / Disable; Redo button
+        if self.edits_redo.len() >= 1 {
+            self.button_redo_enabled = true;
+        } else { self.button_redo_enabled = false };
+
+        // Enable / Disable; Save / Preview button
+        if self.table_files_selected_vec.len() >= 1 && self.modifications_total >= 1 {
+            self.section_options_save_enabled = true;
+        } else { self.section_options_save_enabled = false };
     }
 }
