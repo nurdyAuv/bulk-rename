@@ -565,7 +565,7 @@ impl BulkGui {
                     self.saving_progress += progress_slice;
                 },
                 Err(error) => {
-                    self.errors.push(error);
+                    self.errors.push(error.to_string());
                     self.dialog_open_error = true;
                     println!("{}", error);
                 }
@@ -605,7 +605,7 @@ impl BulkGui {
                     self.saving_progress += progress_slice;
                 },
                 Err(error) => {
-                    self.errors.push(error);
+                    self.errors.push(error.to_string());
                     self.dialog_open_error = true;
                     println!("{}", error);
                 }
@@ -643,7 +643,7 @@ impl BulkGui {
                     self.saving_progress += progress_slice;
                 },
                 Err(error) => {
-                    self.errors.push(error);
+                    self.errors.push(error.to_string());
                     self.dialog_open_error = true;
                     println!("{}", error);
                 }
