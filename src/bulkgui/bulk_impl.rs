@@ -3,10 +3,17 @@ use crate::bulkgui::bulk_enum::*;
 
 use std::fs;
 use std::io;
+use std::io::BufReader;
+use std::io::Read;
 use std::path::Path;
 use faccess;
 use faccess::AccessMode;
 use faccess::PathExt;
+use base64ct::{Base64, Encoding};
+use sha2::*;
+use sha1::*;
+use md5::*;
+
 
 pub fn get_folder(path: String, ignore_hidden: bool) -> io::Result<Folder> {
     //Get Folder, catagorize files and folders and make lists, return Folder
@@ -92,11 +99,64 @@ pub fn rename_file(original_path: String, renamed_path: String) -> Result<(), io
     fs::rename(original_path, renamed_path)
 }
 
+pub fn hash_file(path: String, hash_mode: HashType) -> String {
+    match hash_mode {
+        HashType::MD5 => {
+            let file = fs::File::open(path).unwrap();
+            let mut reader = BufReader::new(file);
+            let mut hasher = Md5::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = reader.read(&mut buffer).unwrap();
+                if count == 0 { break }
+                hasher.update(&buffer[..count]);
+            }
+            return format!("{:?}", Base64::encode_string(&hasher.finalize())).to_string();
+        },
+        HashType::Sha1 => {
+            let file = fs::File::open(path).unwrap();
+            let mut reader = BufReader::new(file);
+            let mut hasher = Sha1::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = reader.read(&mut buffer).unwrap();
+                if count == 0 { break }
+                hasher.update(&buffer[..count]);
+            }
+            return format!("{:?}", Base64::encode_string(&hasher.finalize())).to_string();
+        },
+        HashType::Sha256 => {
+            let file = fs::File::open(path).unwrap();
+            let mut reader = BufReader::new(file);
+            let mut hasher = Sha256::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = reader.read(&mut buffer).unwrap();
+                if count == 0 { break }
+                hasher.update(&buffer[..count]);
+            }
+            return format!("{:?}", Base64::encode_string(&hasher.finalize())).to_string();
+        },
+        HashType::Sha512 => {
+            let file = fs::File::open(path).unwrap();
+            let mut reader = BufReader::new(file);
+            let mut hasher = Sha512::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = reader.read(&mut buffer).unwrap();
+                if count == 0 { break }
+                hasher.update(&buffer[..count]);
+            }
+            return format!("{:?}", Base64::encode_string(&hasher.finalize())).to_string();
+        }
+    };
+}
+
 impl Default for BulkGui {
     fn default() -> Self {
         Self {
             os_string: "",
-            version: "0.9.11.1",
+            version: "0.9.11.2",
             program_name: "Bulk Rename",
             first_cycle: true,
             update_all: true,
